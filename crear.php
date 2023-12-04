@@ -55,35 +55,9 @@
                 $book_author_ids = $_POST["author_ids"];
             }
 
-            try {
-                $conProyecto = getConnection();
-                //comenzamos la tx
-                $conProyecto->begin_transaction();
 
-                $book_id = createBook($conProyecto, $title, $pub_Id, $isbn, $pdate);
-                if ($book_id !== false) {
 
-                    if (isset($book_author_ids) && count($book_author_ids) > 0) :
-                        foreach ($book_author_ids as $author_id) :
-                            $exito = $exito && addAuthorToBook($conProyecto, $book_id, $author_id);
-                            if (!$exito) :
-                                break;
-                            endif;
-                        endforeach;
-                    endif;
-                }
-                if ($exito) {
-                    $conProyecto->commit();
-                } else {
-                    $conn->rollBack();
-                }
-            } catch (mysqli_sql_exception $ex) {
-
-                $conn->rollBack();
-                $exito = false;
-                echo "<div class=\"alert alert-danger\" role=\"alert\">
-                Ha ocurrido una excepción: " . $ex->getMessage() . "</div>";
-            }
+            $exito = createBook( $title, $pub_Id, $isbn, $pdate, $book_author_ids);
         }
     } catch (Exception $ex) {
         $exito = false;
@@ -214,66 +188,66 @@
 
 
         /**
-         * Summary of createBook
-         * @param mysqli $conProyecto conexión mysqli a utilizar
+         * Summary of createBook         
          * @param string $title título del libro a crear
-         * @param mixed $publisher_id  id del editor del libro a crear
-         * @param mixed $isbn  ISBN del libro a crear
-         * @param mixed $pubDate  fecha de publicación del libro a crear
-         * @return int|false Devuelve el id del libro creado o FALSE si hubo un error
+         * @param ?string $publisher_id  id del editor del libro a crear
+         * @param ?string $isbn  ISBN del libro a crear
+         * @param ?DateTimeImmutable $pubDate  fecha de publicación del libro a crear
+         * @param ?array array de ids de autores, si los hay. Null en caso contrario
+         * @return bool Devuelve true si se creó correctamente, false en caso contrario
          */
         function createBook(
-            mysqli $conProyecto,
             string $title,
             ?string $publisher_id,
             ?string $isbn,
-            ?DateTimeImmutable $pubDate
-        ): int|false {
+            ?DateTimeImmutable $pubDate,
+            ?array $book_author_ids
+        ): bool {
 
+            $exito = false;
+            try {
+                $conProyecto = getConnection();
+                $conProyecto->begin_transaction();
 
-
-            $stmt = $conProyecto->prepare("INSERT  INTO books(title, isbn, published_date, publisher_id) 
+                $stmt = $conProyecto->prepare("INSERT  INTO books(title, isbn, published_date, publisher_id) 
             VALUES( ?, ?, ?, ? )");
 
-            $pub_date_param = (($pubDate != null) ? $pubDate->format("Y-m-d") : null);
-            $stmt->bind_param("sssi", $title, $isbn, $pub_date_param, $publisher_id);
-            //Otra opción:
-            // $stmt->execute([$title, $isbn, (($pubDate != null) ? $pubDate->format("Y-m-d") : null), $publisher_id]);
+                $pub_date_param = (($pubDate != null) ? $pubDate->format("Y-m-d") : null);
+                $stmt->bind_param("sssi", $title, $isbn, $pub_date_param, $publisher_id);
+                //Otra opción:
+                // $stmt->execute([$title, $isbn, (($pubDate != null) ? $pubDate->format("Y-m-d") : null), $publisher_id]);
 
-            $stmt->execute();
+                $stmt->execute();
 
-            //Recuperamos el id de la última inserción (devuelve 0 en caso de no crearse adecuadamente)
-            $book_id = $conProyecto->insert_id;
+                //Recuperamos el id de la última inserción (devuelve 0 en caso de no crearse adecuadamente)
+                $book_id = $conProyecto->insert_id;
+                
 
+                if (isset($book_author_ids) && count($book_author_ids) > 0) {
+                    $stmt_book_authors = $conProyecto->prepare("INSERT INTO book_authors(author_id, book_id) VALUES (?, ?)");
+                    foreach ($book_author_ids as $author_id) {
 
-            //Devolvemos bookId o false en caso de error
-            return ($book_id !== 0) ? $book_id : false;
-        }
-        /**
-         * Summary of addAuthorToBook
-         * @param mysqli $conProyecto conexión mysqli a utilizar
-         * @param int $book_id id del libro 
-         * @param int $author_id id de un autor del libro
-         * @return bool TRUE en caso de éxito, FALSE en caso contrario
-         */
-        function addAuthorToBook(mysqli $conProyecto, int $book_id, int $author_id): bool
-        {
+                        $stmt_book_authors->bind_param("ii", $author_id, $book_id);
+                        $stmt_book_authors->execute();
+                        //Otra forma con array
+                        //$stmt_book_authors->execute([$author_id, $book_id]);   
+                       
+                    }
+                    $stmt_book_authors->close();
+                }
+                $stmt->close();
+                $exito =   $conProyecto->commit();
+            } catch (Exception $ex) {
 
-            $stmt = $conProyecto->prepare("INSERT INTO book_authors(author_id, book_id) VALUES (?, ?)");
-
-            $stmt->bind_param("ii", $author_id, $book_id);
-            $stmt->execute();
-            //Otra forma con array
-            //$stmt->execute([$author_id, $book_id]);
-
-            $resultado = ($stmt->affected_rows === 1);
-
-            $stmt->close();
-
-            return $resultado;
+                $conProyecto->rollBack();
+                $exito = false;
+                echo "<div class=\"alert alert-danger\" role=\"alert\">
+        Ha ocurrido una excepción: " . $ex->getMessage() . "</div>";
+            }
+            return $exito;
         }
 
-        
+
 
 
 
